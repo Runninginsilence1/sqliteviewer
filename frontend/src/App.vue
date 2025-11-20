@@ -17,6 +17,7 @@ const pagination = reactive({
 const editingRow = ref(null)
 const savingEdit = ref(false)
 const isCreating = ref(false)
+const lastRefreshed = ref(null)
 
 const limitOptions = [25, 50, 100, 250]
 
@@ -30,6 +31,14 @@ const rangeLabel = computed(() => {
   const start = pagination.offset + 1
   const end = Math.min(pagination.offset + pagination.limit, pagination.total)
   return `${start}-${end} / ${pagination.total}`
+})
+
+const columnCount = computed(() =>
+  columns.value.filter((col) => col !== '_rowid').length,
+)
+const lastRefreshedText = computed(() => {
+  if (!lastRefreshed.value) return '尚未刷新'
+  return lastRefreshed.value.toLocaleTimeString()
 })
 
 const fetchTables = async () => {
@@ -65,6 +74,7 @@ const fetchTableData = async () => {
     columns.value = data.columns || []
     rows.value = data.rows || []
     pagination.total = data.total || 0
+    lastRefreshed.value = new Date()
   } catch (err) {
     tableError.value = err.message || '加载表数据失败'
     columns.value = []
@@ -208,7 +218,10 @@ onMounted(() => {
   <div class="app">
     <aside class="sidebar">
       <div class="sidebar-header">
-        <h1>sqliteviewer</h1>
+  <div>
+          <p class="eyebrow">SQLite Dashboard</p>
+          <h1>sqliteviewer</h1>
+        </div>
         <button class="ghost" @click="fetchTables" :disabled="tablesLoading">
           {{ tablesLoading ? '加载中…' : '刷新' }}
         </button>
@@ -229,14 +242,23 @@ onMounted(() => {
     </aside>
 
     <main class="content">
-      <header class="toolbar">
-        <div class="toolbar-left">
-          <h2 v-if="selectedTable">{{ selectedTable }}</h2>
-          <span v-else class="muted">请选择一个表</span>
+      <section class="header-panel card">
+        <div class="title-block">
+          <p class="eyebrow">数据总览</p>
+          <h2>{{ selectedTable || '请选择一个表' }}</h2>
+          <p class="muted" v-if="selectedTable">
+            {{ columnCount }} 列 · {{ pagination.total }} 行
+          </p>
+          <p class="muted" v-else>选择左侧任意表开始浏览</p>
+          <div class="chip-row" v-if="selectedTable">
+            <span class="chip">范围 {{ rangeLabel }}</span>
+            <span class="chip">每页 {{ pagination.limit }}</span>
+            <span class="chip">刷新于 {{ lastRefreshedText }}</span>
+          </div>
         </div>
         <div class="toolbar-actions" v-if="selectedTable">
           <button @click="openCreateModal">新增行</button>
-          <label>
+          <label class="select-wrap">
             每页
             <select :value="pagination.limit" @change="changeLimit">
               <option v-for="limit in limitOptions" :key="limit" :value="limit">
@@ -244,45 +266,95 @@ onMounted(() => {
               </option>
             </select>
           </label>
-          <span class="range">{{ rangeLabel }}</span>
-          <button @click="prevPage" :disabled="!canPrev">上一页</button>
-          <button @click="nextPage" :disabled="!canNext">下一页</button>
-          <div class="divider" />
-          <button @click="downloadExport('csv')">导出 CSV</button>
-          <button @click="downloadExport('json')">导出 JSON</button>
-          <button @click="downloadExport('sql')">导出 SQL</button>
+          <div class="pagination-buttons">
+            <button class="secondary" @click="prevPage" :disabled="!canPrev">
+              上一页
+            </button>
+            <button class="secondary" @click="nextPage" :disabled="!canNext">
+              下一页
+            </button>
+          </div>
+          <div class="divider vertical" />
+          <div class="export-buttons">
+            <button class="secondary" @click="downloadExport('csv')">
+              CSV
+            </button>
+            <button class="secondary" @click="downloadExport('json')">
+              JSON
+            </button>
+            <button class="secondary" @click="downloadExport('sql')">
+              SQL
+            </button>
+          </div>
         </div>
-      </header>
+      </section>
+
+      <section class="stats-grid" v-if="selectedTable">
+        <article class="stat-card card">
+          <span class="stat-label">总行数</span>
+          <span class="stat-value">{{ pagination.total }}</span>
+          <span class="stat-subtitle">范围 {{ rangeLabel }}</span>
+        </article>
+        <article class="stat-card card">
+          <span class="stat-label">列数</span>
+          <span class="stat-value">{{ columnCount }}</span>
+          <span class="stat-subtitle">包含隐藏 `_rowid`</span>
+        </article>
+        <article class="stat-card card">
+          <span class="stat-label">最近刷新</span>
+          <span class="stat-value">{{ lastRefreshedText }}</span>
+          <span class="stat-subtitle">
+            <button
+              class="link-button"
+              @click="fetchTableData"
+              :disabled="tableLoading"
+            >
+              重新拉取
+            </button>
+          </span>
+        </article>
+      </section>
 
       <div v-if="tableError" class="banner error">{{ tableError }}</div>
 
-      <div v-if="tableLoading" class="loading">加载数据中…</div>
+      <div v-if="tableLoading" class="loading-card card">加载数据中…</div>
 
-      <div v-else-if="selectedTable && rows.length" class="table-wrapper">
-        <table>
-          <thead>
-            <tr>
-              <th v-for="col in columns" :key="col">{{ col }}</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in rows" :key="row._rowid">
-              <td v-for="col in columns" :key="col">
-                <span class="cell-text">{{ formatCell(row[col]) }}</span>
-              </td>
-              <td class="actions-cell">
-                <button @click="openEditor(row)">编辑</button>
-                <button class="danger" @click="deleteRow(row)">删除</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+      <div v-else-if="selectedTable && rows.length" class="table-card card">
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th v-for="col in columns" :key="col">{{ col }}</th>
+                <th class="actions-head">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in rows" :key="row._rowid">
+                <td v-for="col in columns" :key="col">
+                  <span class="cell-text">{{ formatCell(row[col]) }}</span>
+                </td>
+                <td class="actions-cell">
+                  <button class="secondary" @click="openEditor(row)">
+                    编辑
+                  </button>
+                  <button class="danger" @click="deleteRow(row)">删除</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      <p v-else-if="selectedTable" class="empty-tip">
-        {{ rows.length ? '' : '暂时没有数据' }}
-      </p>
+      <div v-else-if="selectedTable" class="empty-state card">
+        <h3>暂时没有数据</h3>
+        <p>尝试新增一行或调整分页条件。</p>
+        <button @click="openCreateModal">新增行</button>
+      </div>
+
+      <div v-else class="empty-state card">
+        <h3>欢迎使用 sqliteviewer</h3>
+        <p>从左侧选择一个表即可开始查看与编辑数据。</p>
+      </div>
     </main>
 
     <div v-if="editingRow" class="modal-backdrop">
