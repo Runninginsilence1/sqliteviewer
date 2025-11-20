@@ -1,0 +1,286 @@
+:root {
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #0f172a;
+  background-color: #f5f6fb;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background-color: #f5f6fb;
+}
+
+#app {
+  min-height: 100vh;
+}
+
+.app {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sidebar {
+  width: 260px;
+  background: #111827;
+  color: #e5e7eb;
+  display: flex;
+  flex-direction: column;
+  padding: 1.5rem;
+}
+
+.sidebar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.5rem;
+}
+
+.sidebar h1 {
+  font-size: 1.25rem;
+  margin: 0;
+}
+
+.table-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.table-item {
+  padding: 0.5rem 0.75rem;
+  border: none;
+  border-radius: 0.35rem;
+  text-align: left;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.table-item:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.table-item.active {
+  background: #2563eb;
+  color: #fff;
+}
+
+.content {
+  flex: 1;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.toolbar h2 {
+  margin: 0;
+}
+
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.toolbar select {
+  margin-left: 0.25rem;
+}
+
+.range {
+  font-size: 0.9rem;
+  color: #6b7280;
+}
+
+.divider {
+  width: 1px;
+  height: 24px;
+  background: #d1d5db;
+}
+
+.banner {
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+}
+
+.banner.error {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.loading,
+.empty-tip {
+  color: #6b7280;
+}
+
+.table-wrapper {
+  overflow: auto;
+  background: #fff;
+  border-radius: 0.5rem;
+  border: 1px solid #e5e7eb;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 0.65rem;
+  border-bottom: 1px solid #e5e7eb;
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  background: #f9fafb;
+  font-weight: 600;
+}
+
+.cell-text {
+  font-family: 'IBM Plex Mono', SFMono-Regular, Menlo, monospace;
+  font-size: 0.9rem;
+}
+
+.actions-cell {
+  width: 80px;
+}
+
+button {
+  border: 1px solid transparent;
+  background: #2563eb;
+  color: #fff;
+  padding: 0.45rem 0.9rem;
+  border-radius: 0.4rem;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button.danger {
+  background: #dc2626;
+}
+
+button.danger:hover:not(:disabled) {
+  background: #b91c1c;
+}
+
+button.ghost {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: inherit;
+}
+
+button.ghost:hover:not(:disabled) {
+  border-color: #fff;
+}
+
+.sidebar button {
+  font-size: 0.95rem;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+}
+
+.modal {
+  background: #fff;
+  width: min(700px, 100%);
+  max-height: 90vh;
+  border-radius: 0.75rem;
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal header,
+.modal footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.modal-body {
+  margin: 1rem 0;
+  overflow: auto;
+  padding-right: 0.5rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 0.75rem;
+}
+
+.field label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 0.35rem;
+}
+
+.field textarea {
+  resize: vertical;
+  min-height: 50px;
+  font-family: 'IBM Plex Mono', SFMono-Regular, Menlo, monospace;
+  border: 1px solid #d1d5db;
+  border-radius: 0.4rem;
+  padding: 0.4rem;
+}
+
+@media (max-width: 960px) {
+  .app {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    width: 100%;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+
+  .table-list {
+    flex-direction: row;
+    flex-wrap: wrap;
+    flex: unset;
+    max-height: 200px;
+  }
+
+  .table-item {
+    flex: 1 0 120px;
+  }
+}
