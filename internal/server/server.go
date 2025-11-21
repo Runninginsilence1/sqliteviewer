@@ -47,10 +47,14 @@ func (s *Server) registerRoutes() {
 	{
 		api.GET("/tables", s.handleListTables)
 		api.GET("/tables/:table", s.handleGetTableData)
+		api.GET("/tables/:table/schema", s.handleGetTableSchema)
 		api.POST("/tables/:table/rows", s.handleInsertRow)
 		api.PATCH("/tables/:table/rows/:rowid", s.handleUpdateRow)
 		api.DELETE("/tables/:table/rows/:rowid", s.handleDeleteRow)
 		api.GET("/tables/:table/export", s.handleExportTable)
+		api.POST("/query", s.handleExecuteQuery)
+		api.GET("/indexes", s.handleListIndexes)
+		api.GET("/views", s.handleListViews)
 	}
 
 	s.router.NoRoute(s.handleSPA)
@@ -85,6 +89,9 @@ func (s *Server) handleGetTableData(c *gin.Context) {
 	}
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "100"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	search := c.DefaultQuery("search", "")
+	orderBy := c.DefaultQuery("orderBy", "")
+	orderDir := c.DefaultQuery("orderDir", "ASC")
 
 	if limit <= 0 {
 		limit = 100
@@ -92,9 +99,54 @@ func (s *Server) handleGetTableData(c *gin.Context) {
 	if offset < 0 {
 		offset = 0
 	}
+	if orderDir != "ASC" && orderDir != "DESC" {
+		orderDir = "ASC"
+	}
 
-	query := fmt.Sprintf("SELECT rowid as _rowid, * FROM %s LIMIT ? OFFSET ?", QuoteIdentifier(table))
-	rows, err := s.db.Query(query, limit, offset)
+	// Build WHERE clause for search
+	whereClause := ""
+	args := []interface{}{}
+	if search != "" {
+		// Get all columns to search in
+		colRows, err := s.db.Query(fmt.Sprintf("PRAGMA table_info(%s)", QuoteIdentifier(table)))
+		if err == nil {
+			defer colRows.Close()
+			var searchConditions []string
+			for colRows.Next() {
+				var cid int
+				var colName, colType string
+				var notnull, pk int
+				var dflt sql.NullString
+				if err := colRows.Scan(&cid, &colName, &colType, &notnull, &dflt, &pk); err == nil {
+					searchConditions = append(searchConditions, fmt.Sprintf("%s LIKE ?", QuoteIdentifier(colName)))
+					args = append(args, "%"+search+"%")
+				}
+			}
+			if len(searchConditions) > 0 {
+				whereClause = "WHERE (" + strings.Join(searchConditions, " OR ") + ")"
+			}
+		}
+	}
+
+	// Build ORDER BY clause
+	orderClause := ""
+	if orderBy != "" && IsSafeIdentifier(orderBy) {
+		orderClause = fmt.Sprintf("ORDER BY %s %s", QuoteIdentifier(orderBy), orderDir)
+	}
+
+	// Build query
+	baseQuery := fmt.Sprintf("SELECT rowid as _rowid, * FROM %s", QuoteIdentifier(table))
+	query := baseQuery
+	if whereClause != "" {
+		query += " " + whereClause
+	}
+	if orderClause != "" {
+		query += " " + orderClause
+	}
+	query += " LIMIT ? OFFSET ?"
+	args = append(args, limit, offset)
+
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -126,20 +178,37 @@ func (s *Server) handleGetTableData(c *gin.Context) {
 		data = append(data, row)
 	}
 
+	// Get total count
 	totalQuery := fmt.Sprintf("SELECT COUNT(1) FROM %s", QuoteIdentifier(table))
-	var total int
-	if err := s.db.QueryRow(totalQuery).Scan(&total); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+	if whereClause != "" {
+		totalQuery += " " + whereClause
+		totalArgs := args[:len(args)-2] // Remove limit and offset
+		var total int
+		if err := s.db.QueryRow(totalQuery, totalArgs...).Scan(&total); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"columns": columns,
+			"rows":    data,
+			"total":   total,
+			"limit":   limit,
+			"offset":  offset,
+		})
+	} else {
+		var total int
+		if err := s.db.QueryRow(totalQuery).Scan(&total); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"columns": columns,
+			"rows":    data,
+			"total":   total,
+			"limit":   limit,
+			"offset":  offset,
+		})
 	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"columns": columns,
-		"rows":    data,
-		"total":   total,
-		"limit":   limit,
-		"offset":  offset,
-	})
 }
 
 func (s *Server) handleUpdateRow(c *gin.Context) {
@@ -407,4 +476,218 @@ func (s *Server) getTableSchema(table string) (string, error) {
 		return "", errors.New("schema not found")
 	}
 	return schema.String, nil
+}
+
+func (s *Server) handleGetTableSchema(c *gin.Context) {
+	table := c.Param("table")
+	if !IsSafeIdentifier(table) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid table name"})
+		return
+	}
+
+	// Get table schema SQL
+	schema, err := s.getTableSchema(table)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Get column info using PRAGMA
+	rows, err := s.db.Query(fmt.Sprintf("PRAGMA table_info(%s)", QuoteIdentifier(table)))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	type ColumnInfo struct {
+		CID        int    `json:"cid"`
+		Name       string `json:"name"`
+		Type       string `json:"type"`
+		NotNull    int    `json:"notnull"`
+		Default    string `json:"dflt_value"`
+		PrimaryKey int    `json:"pk"`
+	}
+
+	var columns []ColumnInfo
+	for rows.Next() {
+		var col ColumnInfo
+		var dflt sql.NullString
+		if err := rows.Scan(&col.CID, &col.Name, &col.Type, &col.NotNull, &dflt, &col.PrimaryKey); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if dflt.Valid {
+			col.Default = dflt.String
+		}
+		columns = append(columns, col)
+	}
+
+	// Get indexes
+	indexRows, err := s.db.Query(`SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name=?`, table)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer indexRows.Close()
+
+	type IndexInfo struct {
+		Name string `json:"name"`
+		SQL  string `json:"sql"`
+	}
+	var indexes []IndexInfo
+	for indexRows.Next() {
+		var idx IndexInfo
+		var sqlStr sql.NullString
+		if err := indexRows.Scan(&idx.Name, &sqlStr); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if sqlStr.Valid {
+			idx.SQL = sqlStr.String
+		}
+		indexes = append(indexes, idx)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"schema":  schema,
+		"columns": columns,
+		"indexes": indexes,
+	})
+}
+
+func (s *Server) handleExecuteQuery(c *gin.Context) {
+	var req struct {
+		Query string `json:"query"`
+	}
+	if err := c.BindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON payload"})
+		return
+	}
+
+	if strings.TrimSpace(req.Query) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "query cannot be empty"})
+		return
+	}
+
+	// Check if it's a SELECT query (read-only)
+	queryUpper := strings.ToUpper(strings.TrimSpace(req.Query))
+	isSelect := strings.HasPrefix(queryUpper, "SELECT") || strings.HasPrefix(queryUpper, "WITH")
+
+	if isSelect {
+		rows, err := s.db.Query(req.Query)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		defer rows.Close()
+
+		columns, err := rows.Columns()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		var data []map[string]interface{}
+		for rows.Next() {
+			values := make([]interface{}, len(columns))
+			valuePtrs := make([]interface{}, len(columns))
+			for i := range values {
+				valuePtrs[i] = &values[i]
+			}
+			if err := rows.Scan(valuePtrs...); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+
+			row := map[string]interface{}{}
+			for i, col := range columns {
+				row[col] = normalizeValue(values[i])
+			}
+			data = append(data, row)
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"columns": columns,
+			"rows":    data,
+			"type":    "select",
+		})
+	} else {
+		// Execute write operations (INSERT, UPDATE, DELETE, etc.)
+		result, err := s.db.Exec(req.Query)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		affected, _ := result.RowsAffected()
+		lastInsertID, _ := result.LastInsertId()
+
+		c.JSON(http.StatusOK, gin.H{
+			"type":         "write",
+			"rowsAffected": affected,
+			"lastInsertId": lastInsertID,
+		})
+	}
+}
+
+func (s *Server) handleListIndexes(c *gin.Context) {
+	rows, err := s.db.Query(`SELECT name, tbl_name, sql FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_%' ORDER BY tbl_name, name`)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	type Index struct {
+		Name  string `json:"name"`
+		Table string `json:"table"`
+		SQL   string `json:"sql"`
+	}
+
+	var indexes []Index
+	for rows.Next() {
+		var idx Index
+		var sqlStr sql.NullString
+		if err := rows.Scan(&idx.Name, &idx.Table, &sqlStr); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if sqlStr.Valid {
+			idx.SQL = sqlStr.String
+		}
+		indexes = append(indexes, idx)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"indexes": indexes})
+}
+
+func (s *Server) handleListViews(c *gin.Context) {
+	rows, err := s.db.Query(`SELECT name, sql FROM sqlite_master WHERE type='view' ORDER BY name`)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	type View struct {
+		Name string `json:"name"`
+		SQL  string `json:"sql"`
+	}
+
+	var views []View
+	for rows.Next() {
+		var v View
+		var sqlStr sql.NullString
+		if err := rows.Scan(&v.Name, &sqlStr); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if sqlStr.Valid {
+			v.SQL = sqlStr.String
+		}
+		views = append(views, v)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"views": views})
 }
